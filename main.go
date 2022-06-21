@@ -61,6 +61,20 @@ var (
 			Help: "Unix timestamp of the last received collectd metrics push in seconds.",
 		},
 	)
+	valueListsPushed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "collectd_value_lists_pushed",
+			Help: "Incremented once for each ValueList push received",
+		},
+		[]string{"hostname"},
+	)
+	valueListsGarbageCollected = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "collectd_value_lists_garbage_collected",
+			Help: "Incremented once for each ValueList garbage collected",
+		},
+		[]string{"hostname"},
+	)
 	metric_name_re = regexp.MustCompile("[^a-zA-Z0-9_:]")
 )
 
@@ -184,6 +198,7 @@ func (c *collectdCollector) processSamples() {
 			for id, vl := range c.valueLists {
 				validUntil := vl.Time.Add(timeout * vl.Interval)
 				if validUntil.Before(now) {
+					valueListsGarbageCollected.WithLabelValues(vl.Host).Inc()
 					delete(c.valueLists, id)
 				}
 			}
@@ -230,6 +245,7 @@ func (c collectdCollector) Describe(ch chan<- *prometheus.Desc) {
 // Write writes "vl" to the collector's channel, to be (asynchronously)
 // processed by processSamples(). It implements api.Writer.
 func (c collectdCollector) Write(_ context.Context, vl *api.ValueList) error {
+	valueListsPushed.WithLabelValues(vl.Host).Inc()
 	lastPush.Set(float64(time.Now().UnixNano()) / 1e9)
 	c.ch <- *vl
 
@@ -310,6 +326,8 @@ func startCollectdServer(ctx context.Context, w api.Writer, logger log.Logger) {
 
 func init() {
 	prometheus.MustRegister(version.NewCollector("collectd_exporter"))
+	prometheus.MustRegister(valueListsPushed)
+	prometheus.MustRegister(valueListsGarbageCollected)
 }
 
 func main() {
